@@ -86,6 +86,7 @@ $script:progressEta           = -1
 $script:progressEtaComputedAt = [datetime]::MinValue
 $script:progressActivity      = ""
 $script:lastProgressUpdate    = [datetime]::MinValue
+$script:LazyPlaceholder       = '__ps_treesize_lazy__'
 
 function Get-DirectorySize {
     param (
@@ -165,7 +166,9 @@ function Get-DirectorySize {
 }
 
 function Add-TreeViewNodes {
-    # Recursively populate a Windows Forms TreeNodeCollection from our scan result tree.
+    # Adds a single Windows Forms TreeNode for the given data node.
+    # Children are NOT added immediately; instead a lazy-load placeholder stub is inserted
+    # so the BeforeExpand handler can populate them on demand.
     param (
         [System.Windows.Forms.TreeNodeCollection]$Nodes,
         [PSCustomObject]$Node,
@@ -178,14 +181,16 @@ function Add-TreeViewNodes {
     $tvNode = [System.Windows.Forms.TreeNode]::new(
         ("{0}  {1}" -f (Format-Size $Node.Size), $displayName)
     )
-    $tvNode.Tag         = [PSCustomObject]@{ Pct = $pct; Path = $Node.Path }
+    $tvNode.Tag         = [PSCustomObject]@{ Pct = $pct; Path = $Node.Path; DataNode = $Node }
     $tvNode.ToolTipText = if ($IsRoot) { '' } else { "$pct% of parent" }
 
-    foreach ($child in $Node.Children) {
-        $canDisplay = ($Depth -eq -1) -or ($child.Depth -le $Depth)
-        if ($canDisplay -and $child.Size -ge $MinSize) {
-            Add-TreeViewNodes -Nodes $tvNode.Nodes -Node $child -ParentSize $Node.Size
-        }
+    # Add a lazy-load placeholder stub if this node has visible children.
+    # The BeforeExpand handler will replace it with real child nodes on demand.
+    $visibleKids = $Node.Children | Where-Object {
+        (($Depth -eq -1) -or ($_.Depth -le $Depth)) -and ($_.Size -ge $MinSize)
+    }
+    if ($visibleKids) {
+        $tvNode.Nodes.Add($script:LazyPlaceholder) | Out-Null
     }
 
     $Nodes.Add($tvNode) | Out-Null
@@ -257,7 +262,7 @@ function Show-TreeGui {
 
     $statusLabel           = [System.Windows.Forms.Label]::new()
     $statusLabel.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $statusLabel.Text      = "Total: $(Format-Size $RootNode.Size)"
+    $statusLabel.Text      = 'Building tree...'
     $statusLabel.Font      = [System.Drawing.Font]::new('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $statusLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
     $statusLabel.Padding   = [System.Windows.Forms.Padding]::new(6, 0, 0, 0)
@@ -331,7 +336,35 @@ function Show-TreeGui {
     $tv.ContextMenuStrip = $contextMenu
     # ─────────────────────────────────────────────────────────────────────────
 
-    Add-TreeViewNodes -Nodes $tv.Nodes -Node $RootNode -IsRoot $true | Out-Null
+    # ── Lazy-load children when a node is first expanded ─────────────────────
+    $tv.Add_BeforeExpand({
+        param($beSender, $beE)
+        $expandingNode = $beE.Node
+        if ($expandingNode.Nodes.Count -eq 1 -and
+            $null -eq $expandingNode.Nodes[0].Tag) {
+            $tv.BeginUpdate()
+            $expandingNode.Nodes.Clear()
+            $dataNode = $expandingNode.Tag.DataNode
+            foreach ($child in $dataNode.Children) {
+                $canDisplay = ($Depth -eq -1) -or ($child.Depth -le $Depth)
+                if ($canDisplay -and $child.Size -ge $MinSize) {
+                    Add-TreeViewNodes -Nodes $expandingNode.Nodes -Node $child -ParentSize $dataNode.Size
+                }
+            }
+            $tv.EndUpdate()
+        }
+    })
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Populate tree after the form is visible (prevents apparent hang) ─────
+    $form.Add_Shown({
+        $tv.BeginUpdate()
+        Add-TreeViewNodes -Nodes $tv.Nodes -Node $RootNode -IsRoot $true | Out-Null
+        if ($tv.Nodes.Count -gt 0) { $tv.Nodes[0].Expand() }   # auto-expand root; BeforeExpand fires to load children
+        $tv.EndUpdate()
+        $statusLabel.Text = "Total: $(Format-Size $RootNode.Size)"
+    })
+    # ─────────────────────────────────────────────────────────────────────────
 
     # Add controls in reverse dock order so Fill occupies the remaining space correctly
     $form.Controls.Add($tv)
