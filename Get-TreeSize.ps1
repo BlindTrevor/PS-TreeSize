@@ -5,6 +5,7 @@
 .DESCRIPTION
     Get-TreeSize recursively scans a specified directory (or the system drive by default) and
     displays a hierarchical tree view of all folders and their sizes, sorted by size descending.
+    Use -Gui to open an interactive, collapsible Windows Forms tree window instead of console output.
 
 .PARAMETER Path
     The root directory to scan. Defaults to the system drive (e.g., C:\).
@@ -14,6 +15,10 @@
 
 .PARAMETER MinSize
     Minimum size in bytes to display an entry. Defaults to 0.
+
+.PARAMETER Gui
+    Opens a Windows Forms window with a collapsible tree view of the results instead of
+    printing to the console. Requires Windows and .NET Windows Forms support.
 
 .EXAMPLE
     .\Get-TreeSize.ps1
@@ -30,6 +35,10 @@
 .EXAMPLE
     .\Get-TreeSize.ps1 -Path "C:\Windows" -MinSize 1MB
     Scans C:\Windows and only shows entries larger than 1 MB.
+
+.EXAMPLE
+    .\Get-TreeSize.ps1 -Path "C:\Users" -Gui
+    Scans C:\Users and displays results in an interactive, collapsible Windows Forms tree window.
 #>
 
 [CmdletBinding()]
@@ -41,7 +50,10 @@ param (
     [int]$Depth = -1,
 
     [Parameter()]
-    [long]$MinSize = 0
+    [long]$MinSize = 0,
+
+    [Parameter()]
+    [switch]$Gui
 )
 
 function Format-Size {
@@ -132,6 +144,79 @@ function Get-DirectorySize {
     }
 }
 
+function Add-TreeViewNodes {
+    # Recursively populate a Windows Forms TreeNodeCollection from our scan result tree.
+    param (
+        [System.Windows.Forms.TreeNodeCollection]$Nodes,
+        [PSCustomObject]$Node,
+        [bool]$IsRoot = $false
+    )
+
+    $displayName = if ($IsRoot) { $Node.Path } else { Split-Path $Node.Path -Leaf }
+    $tvNode = [System.Windows.Forms.TreeNode]::new(
+        "{0}  {1}" -f (Format-Size $Node.Size), $displayName
+    )
+
+    foreach ($child in $Node.Children) {
+        $canDisplay = ($Depth -eq -1) -or ($child.Depth -le $Depth)
+        if ($canDisplay -and $child.Size -ge $MinSize) {
+            Add-TreeViewNodes -Nodes $tvNode.Nodes -Node $child
+        }
+    }
+
+    $Nodes.Add($tvNode) | Out-Null
+    return $tvNode
+}
+
+function Show-TreeGui {
+    param ([PSCustomObject]$RootNode)
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+    }
+    catch {
+        Write-Error "Windows Forms is not available on this system. $_"
+        return
+    }
+
+    $form                = [System.Windows.Forms.Form]::new()
+    $form.Text           = "PS-TreeSize - $($RootNode.Path)"
+    $form.Size           = [System.Drawing.Size]::new(700, 550)
+    $form.MinimumSize    = [System.Drawing.Size]::new(400, 300)
+    $form.StartPosition  = 'CenterScreen'
+
+    $tv               = [System.Windows.Forms.TreeView]::new()
+    $tv.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $tv.Font          = [System.Drawing.Font]::new('Consolas', 10)
+    $tv.ShowLines     = $true
+    $tv.ShowPlusMinus = $true
+    $tv.Scrollable    = $true
+
+    $statusBar            = [System.Windows.Forms.Panel]::new()
+    $statusBar.Dock       = [System.Windows.Forms.DockStyle]::Bottom
+    $statusBar.Height     = 30
+    $statusBar.BackColor  = [System.Drawing.SystemColors]::Control
+
+    $statusLabel           = [System.Windows.Forms.Label]::new()
+    $statusLabel.Dock      = [System.Windows.Forms.DockStyle]::Fill
+    $statusLabel.Text      = "Total: $(Format-Size $RootNode.Size)"
+    $statusLabel.Font      = [System.Drawing.Font]::new('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $statusLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+    $statusLabel.Padding   = [System.Windows.Forms.Padding]::new(6, 0, 0, 0)
+    $statusBar.Controls.Add($statusLabel)
+
+    $rootTvNode = Add-TreeViewNodes -Nodes $tv.Nodes -Node $RootNode -IsRoot $true
+    $rootTvNode.Expand()
+
+    # Add controls in reverse dock order so Fill occupies the remaining space correctly
+    $form.Controls.Add($tv)
+    $form.Controls.Add($statusBar)
+
+    $form.ShowDialog() | Out-Null
+    $form.Dispose()
+}
+
 function Show-Tree {
     param (
         [PSCustomObject]$Node,
@@ -174,7 +259,18 @@ try {
 
 $tree = Get-DirectorySize -DirPath $resolvedPath -CurrentDepth 0 -Indent ""
 Write-Progress -Activity $script:progressActivity -Completed
-Show-Tree -Node $tree -IsRoot $true
 
-Write-Host ""
-Write-Host ("Total: {0}" -f (Format-Size $tree.Size)) -ForegroundColor Green
+if ($Gui) {
+    # $IsWindows is only defined in PowerShell 6+; on Windows PowerShell 5.x we're always on Windows.
+    $isWindowsPlatform = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows
+    if (-not $isWindowsPlatform) {
+        Write-Error "The -Gui switch requires Windows and Windows Forms support."
+        exit 1
+    }
+    Show-TreeGui -RootNode $tree
+} else {
+    Show-Tree -Node $tree -IsRoot $true
+
+    Write-Host ""
+    Write-Host ("Total: {0}" -f (Format-Size $tree.Size)) -ForegroundColor Green
+}
