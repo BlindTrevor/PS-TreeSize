@@ -57,12 +57,13 @@ function Format-Size {
 }
 
 # Script-scope state used to track scan progress across recursive calls
-$script:scanStartTime    = $null
-$script:topLevelTotal    = 0
-$script:topLevelDone     = 0
-$script:progressPct      = 0
-$script:progressEta      = -1
-$script:progressActivity = ""
+$script:scanStartTime      = $null
+$script:topLevelTotal      = 0
+$script:topLevelDone       = 0
+$script:progressPct        = 0
+$script:progressEta        = -1
+$script:progressActivity   = ""
+$script:lastProgressUpdate = [datetime]::MinValue
 
 function Get-DirectorySize {
     param (
@@ -71,11 +72,12 @@ function Get-DirectorySize {
         [string]$Indent
     )
 
-    # Update the progress bar for every directory visited.
+    # Update the progress bar, throttled to at most once every 150 ms.
     # Recalculate percentage and ETA each time we start a new top-level subdirectory.
     if ($script:topLevelTotal -gt 0) {
+        $now = [datetime]::UtcNow
         if ($CurrentDepth -eq 1) {
-            $elapsed = (Get-Date) - $script:scanStartTime
+            $elapsed = $now - $script:scanStartTime
             $script:progressPct = [int](($script:topLevelDone / $script:topLevelTotal) * 100)
             if ($script:topLevelDone -gt 0) {
                 $secsPerDir = $elapsed.TotalSeconds / $script:topLevelDone
@@ -83,41 +85,41 @@ function Get-DirectorySize {
             }
             $script:topLevelDone++
         }
-        Write-Progress -Activity $script:progressActivity `
-            -Status "Scanning: $DirPath" `
-            -PercentComplete $script:progressPct `
-            -SecondsRemaining $script:progressEta
+        if (($now - $script:lastProgressUpdate).TotalMilliseconds -gt 150) {
+            Write-Progress -Activity $script:progressActivity `
+                -Status "Scanning: $DirPath" `
+                -PercentComplete $script:progressPct `
+                -SecondsRemaining $script:progressEta
+            $script:lastProgressUpdate = $now
+        }
     }
 
     $totalSize = [long]0
+    $subDirs   = [System.Collections.Generic.List[System.IO.DirectoryInfo]]::new()
 
-    # Sum files directly in this directory
+    # Single .NET enumeration pass — significantly faster than two Get-ChildItem calls.
+    # DirectoryInfo.EnumerateFileSystemInfos() streams results lazily without buffering.
     try {
-        $files = Get-ChildItem -LiteralPath $DirPath -File -Force -ErrorAction Stop
-        foreach ($file in $files) {
-            $totalSize += $file.Length
+        foreach ($item in ([System.IO.DirectoryInfo]::new($DirPath)).EnumerateFileSystemInfos()) {
+            if ($item -is [System.IO.DirectoryInfo]) {
+                $subDirs.Add($item)
+            } elseif ($item -is [System.IO.FileInfo]) {
+                $totalSize += $item.Length
+            }
+            # else: skip other special file types (e.g. reparse points not resolved as file/dir)
         }
     }
     catch {
-        # Access denied or other error reading files - skip silently
+        # Access denied or other error - skip silently
     }
 
-    # Recurse into subdirectories
-    $subDirs = @()
-    try {
-        $subDirs = @(Get-ChildItem -LiteralPath $DirPath -Directory -Force -ErrorAction Stop)
-    }
-    catch {
-        # Access denied - skip silently
-    }
-
-    $subResults = @()
+    $subResults = [System.Collections.Generic.List[PSCustomObject]]::new()
     foreach ($subDir in $subDirs) {
         $subSize = Get-DirectorySize -DirPath $subDir.FullName -CurrentDepth ($CurrentDepth + 1) -Indent "$Indent    "
         $totalSize += $subSize.Size
         # Only include in display results when within the requested depth
         if (($Depth -eq -1) -or ($CurrentDepth -lt $Depth)) {
-            $subResults += $subSize
+            $subResults.Add($subSize)
         }
     }
 
@@ -162,7 +164,7 @@ Write-Host "Scanning '$resolvedPath' ..." -ForegroundColor Cyan
 Write-Host ""
 
 # Pre-count immediate subdirectories so we can show meaningful progress/ETA
-$script:scanStartTime    = Get-Date
+$script:scanStartTime    = [datetime]::UtcNow
 $script:progressActivity = "Scanning '$resolvedPath'"
 try {
     $script:topLevelTotal = @(Get-ChildItem -LiteralPath $resolvedPath -Directory -Force -ErrorAction SilentlyContinue).Count
