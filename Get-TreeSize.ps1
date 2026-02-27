@@ -178,7 +178,7 @@ function Add-TreeViewNodes {
     $tvNode = [System.Windows.Forms.TreeNode]::new(
         ("{0}  {1}" -f (Format-Size $Node.Size), $displayName)
     )
-    $tvNode.Tag         = $pct
+    $tvNode.Tag         = [PSCustomObject]@{ Pct = $pct; Path = $Node.Path }
     $tvNode.ToolTipText = if ($IsRoot) { '' } else { "$pct% of parent" }
 
     foreach ($child in $Node.Children) {
@@ -198,6 +198,7 @@ function Show-TreeGui {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
+        Add-Type -AssemblyName Microsoft.VisualBasic
     }
     catch {
         Write-Error "Windows Forms is not available on this system. $_"
@@ -223,7 +224,7 @@ function Show-TreeGui {
     $tv.Add_DrawNode({
         param($drawSender, $drawE)
 
-        $pct        = if ($null -ne $drawE.Node.Tag) { [double]$drawE.Node.Tag } else { 0.0 }
+        $pct        = if ($null -ne $drawE.Node.Tag) { [double]$drawE.Node.Tag.Pct } else { 0.0 }
         $isSelected = ($drawE.State -band [System.Windows.Forms.TreeNodeStates]::Selected) -ne 0
 
         # Draw background
@@ -261,6 +262,74 @@ function Show-TreeGui {
     $statusLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
     $statusLabel.Padding   = [System.Windows.Forms.Padding]::new(6, 0, 0, 0)
     $statusBar.Controls.Add($statusLabel)
+
+    # ── Context menu ─────────────────────────────────────────────────────────
+    $menuOpenExplorer        = [System.Windows.Forms.ToolStripMenuItem]::new('Open in Explorer')
+    $menuOpenExplorer.Add_Click({
+        $node = $tv.SelectedNode
+        if ($null -ne $node -and $null -ne $node.Tag) {
+            $itemPath = $node.Tag.Path
+            if (Test-Path -LiteralPath $itemPath -PathType Container) {
+                Start-Process 'explorer.exe' -ArgumentList "`"$itemPath`""
+            }
+        }
+    })
+
+    $menuCopyPath            = [System.Windows.Forms.ToolStripMenuItem]::new('Copy Path to Clipboard')
+    $menuCopyPath.Add_Click({
+        $node = $tv.SelectedNode
+        if ($null -ne $node -and $null -ne $node.Tag) {
+            [System.Windows.Forms.Clipboard]::SetText($node.Tag.Path)
+        }
+    })
+
+    $menuDelete              = [System.Windows.Forms.ToolStripMenuItem]::new('Delete (Move to Recycle Bin)')
+    $menuDelete.Add_Click({
+        $node = $tv.SelectedNode
+        if ($null -ne $node -and $null -ne $node.Tag) {
+            $itemPath = $node.Tag.Path
+            $result = [System.Windows.Forms.MessageBox]::Show(
+                "Move to Recycle Bin:`n$itemPath",
+                'Confirm Delete',
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+                try {
+                    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+                        $itemPath,
+                        [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                        [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+                    )
+                    $node.Remove()
+                    $statusLabel.Text = "Moved to Recycle Bin: $itemPath  (rescan to refresh sizes)"
+                } catch {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "Could not delete:`n$_", 'Error',
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Error
+                    ) | Out-Null
+                }
+            }
+        }
+    })
+
+    $contextMenu = [System.Windows.Forms.ContextMenuStrip]::new()
+    $contextMenu.Items.Add($menuOpenExplorer) | Out-Null
+    $contextMenu.Items.Add($menuCopyPath)     | Out-Null
+    $contextMenu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new()) | Out-Null
+    $contextMenu.Items.Add($menuDelete)       | Out-Null
+
+    # Select the node under the cursor on right-click before the menu opens
+    $tv.Add_MouseDown({
+        param($s, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+            $hitNode = $tv.GetNodeAt($e.X, $e.Y)
+            if ($null -ne $hitNode) { $tv.SelectedNode = $hitNode }
+        }
+    })
+    $tv.ContextMenuStrip = $contextMenu
+    # ─────────────────────────────────────────────────────────────────────────
 
     Add-TreeViewNodes -Nodes $tv.Nodes -Node $RootNode -IsRoot $true | Out-Null
 
