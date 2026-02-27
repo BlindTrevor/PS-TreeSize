@@ -56,12 +56,38 @@ function Format-Size {
     }
 }
 
+# Script-scope state used to track scan progress across recursive calls
+$script:scanStartTime    = $null
+$script:topLevelTotal    = 0
+$script:topLevelDone     = 0
+$script:progressPct      = 0
+$script:progressEta      = -1
+$script:progressActivity = ""
+
 function Get-DirectorySize {
     param (
         [string]$DirPath,
         [int]$CurrentDepth,
         [string]$Indent
     )
+
+    # Update the progress bar for every directory visited.
+    # Recalculate percentage and ETA each time we start a new top-level subdirectory.
+    if ($script:topLevelTotal -gt 0) {
+        if ($CurrentDepth -eq 1) {
+            $elapsed = (Get-Date) - $script:scanStartTime
+            $script:progressPct = [int](($script:topLevelDone / $script:topLevelTotal) * 100)
+            if ($script:topLevelDone -gt 0) {
+                $secsPerDir = $elapsed.TotalSeconds / $script:topLevelDone
+                $script:progressEta = [int]($secsPerDir * ($script:topLevelTotal - $script:topLevelDone))
+            }
+            $script:topLevelDone++
+        }
+        Write-Progress -Activity $script:progressActivity `
+            -Status "Scanning: $DirPath" `
+            -PercentComplete $script:progressPct `
+            -SecondsRemaining $script:progressEta
+    }
 
     $totalSize = [long]0
 
@@ -135,7 +161,17 @@ $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
 Write-Host "Scanning '$resolvedPath' ..." -ForegroundColor Cyan
 Write-Host ""
 
+# Pre-count immediate subdirectories so we can show meaningful progress/ETA
+$script:scanStartTime    = Get-Date
+$script:progressActivity = "Scanning '$resolvedPath'"
+try {
+    $script:topLevelTotal = @(Get-ChildItem -LiteralPath $resolvedPath -Directory -Force -ErrorAction SilentlyContinue).Count
+} catch {
+    $script:topLevelTotal = 0
+}
+
 $tree = Get-DirectorySize -DirPath $resolvedPath -CurrentDepth 0 -Indent ""
+Write-Progress -Activity $script:progressActivity -Completed
 Show-Tree -Node $tree -IsRoot $true
 
 Write-Host ""
