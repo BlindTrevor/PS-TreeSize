@@ -78,7 +78,6 @@ function Format-Size {
 }
 
 # Script-scope state used to track scan progress across recursive calls
-$script:scanStartTime      = $null
 $script:topLevelTotal      = 0
 $script:topLevelDone       = 0
 $script:progressPct        = 0
@@ -102,19 +101,9 @@ function Get-DirectorySize {
             $script:topLevelDone++
         }
         if (($now - $script:lastProgressUpdate).TotalMilliseconds -gt 150) {
-            # Derive ETA from cumulative elapsed time and completed-dir count so the
-            # estimate adjusts smoothly and never disappears between depth-1 boundaries.
-            $elapsed = ($now - $script:scanStartTime).TotalSeconds
-            $displayEta = if ($script:topLevelDone -gt 0 -and $elapsed -gt 0) {
-                $secsPerDir = $elapsed / $script:topLevelDone
-                [Math]::Max(0, [Math]::Round($secsPerDir * ($script:topLevelTotal - $script:topLevelDone)))
-            } else {
-                -1
-            }
             Write-Progress -Activity $script:progressActivity `
                 -Status "Scanning: $DirPath" `
-                -PercentComplete $script:progressPct `
-                -SecondsRemaining $displayEta
+                -PercentComplete $script:progressPct
             $script:lastProgressUpdate = $now
         }
     }
@@ -398,8 +387,7 @@ $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
 Write-Host "Scanning '$resolvedPath' ..." -ForegroundColor Cyan
 Write-Host ""
 
-# Pre-count immediate subdirectories so we can show meaningful progress/ETA
-$script:scanStartTime    = [datetime]::UtcNow
+# Pre-count immediate subdirectories so we can show meaningful progress
 $script:progressActivity = "Scanning '$resolvedPath'"
 try {
     $script:topLevelTotal = @(Get-ChildItem -LiteralPath $resolvedPath -Directory -Force -ErrorAction SilentlyContinue).Count
