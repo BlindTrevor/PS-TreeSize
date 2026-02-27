@@ -6,6 +6,7 @@ A PowerShell script that scans directories and displays a hierarchical tree view
 
 - Recursively scans all subdirectories and calculates their total sizes
 - **Opens an interactive, collapsible tree window by default on Windows** (requires no extra flags)
+- Pac-Man animation in the console while the scan is running 🟡
 - Each row shows a proportional size bar so large folders stand out at a glance
 - Right-click any folder to open it in Explorer, copy its path, or move it to the Recycle Bin
 - Displays results sorted by size (largest first) at every level
