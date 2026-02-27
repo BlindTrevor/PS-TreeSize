@@ -90,15 +90,16 @@ $script:pacmanShown           = $false
 
 function Write-PacmanProgress {
     # Animation layout: Pac-Man moves across a trail of dots then wraps back to the start
-    $trailLen = 30                  # number of dots between start and the power pellet
-    $wrapAt   = $trailLen + 2       # extra frames after eating the trail before reset
+    $trailLen  = 30                 # number of dots between start and the power pellet
+    $wrapAt    = $trailLen + 2      # extra frames after eating the trail before reset
     $lineWidth = $trailLen + 5      # padded field width to fully overwrite previous frame
 
     # Alternate between open (ᗧ) and closed (ᗦ) mouth each frame
     $mouth = if ($script:pacmanFrame % 2 -eq 0) { 'ᗧ' } else { 'ᗦ' }
     $pos   = $script:pacmanPos % $wrapAt
     $trail = if ($pos -lt $trailLen) { ('·' * ($trailLen - $pos)) + '•' } else { '' }
-    Write-Host ("`r  {0,-$lineWidth}" -f ($(' ' * $pos) + $mouth + $trail)) -NoNewline -ForegroundColor Yellow
+    $pct   = if ($script:topLevelTotal -gt 0) { "{0,3}%" -f $script:progressPct } else { '   ?' }
+    Write-Host ("`r  $pct  {0,-$lineWidth}" -f ($(' ' * $pos) + $mouth + $trail)) -NoNewline -ForegroundColor Yellow
     $script:pacmanFrame++
     $script:pacmanPos++
     $script:pacmanShown = $true
@@ -120,9 +121,6 @@ function Get-DirectorySize {
             $script:topLevelDone++
         }
         if (($now - $script:lastProgressUpdate).TotalMilliseconds -gt 150) {
-            Write-Progress -Activity $script:progressActivity `
-                -Status "Scanning: $DirPath" `
-                -PercentComplete $script:progressPct
             Write-PacmanProgress
             $script:lastProgressUpdate = $now
         }
@@ -416,9 +414,8 @@ try {
 }
 
 $tree = Get-DirectorySize -DirPath $resolvedPath -CurrentDepth 0 -Indent ""
-Write-Progress -Activity $script:progressActivity -Completed
 if ($script:pacmanShown) {
-    Write-Host ("`r{0}" -f (' ' * 40))  # Clear the Pac-Man animation line
+    Write-Host ("`r{0}" -f (' ' * 43))  # Clear: 2 indent + 4 pct + 2 spacing + (trailLen 30 + 5) = 43
 }
 
 # $IsWindows is only defined in PowerShell 6+; on Windows PowerShell 5.x we're always on Windows.
