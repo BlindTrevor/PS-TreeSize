@@ -5,7 +5,9 @@
 .DESCRIPTION
     Get-TreeSize recursively scans a specified directory (or the system drive by default) and
     displays a hierarchical tree view of all folders and their sizes, sorted by size descending.
-    Use -Gui to open an interactive, collapsible Windows Forms tree window instead of console output.
+    On Windows the script opens an interactive, collapsible Windows Forms tree window by default.
+    Pass -NoGui to print the tree to the console instead. On non-Windows systems the console output
+    is always used; pass -Gui to explicitly request Windows Forms (which will raise an error).
 
 .PARAMETER Path
     The root directory to scan. Defaults to the system drive (e.g., C:\).
@@ -17,8 +19,12 @@
     Minimum size in bytes to display an entry. Defaults to 0.
 
 .PARAMETER Gui
-    Opens a Windows Forms window with a collapsible tree view of the results instead of
-    printing to the console. Requires Windows and .NET Windows Forms support.
+    Forces the Windows Forms GUI window even when it would otherwise not be shown.
+    Exists primarily for clarity; on Windows the GUI is the default.
+
+.PARAMETER NoGui
+    Suppresses the Windows Forms GUI and prints the tree to the console instead.
+    Useful for scripting, piping, or running on Windows without a display.
 
 .EXAMPLE
     .\Get-TreeSize.ps1
@@ -53,7 +59,10 @@ param (
     [long]$MinSize = 0,
 
     [Parameter()]
-    [switch]$Gui
+    [switch]$Gui,
+
+    [Parameter()]
+    [switch]$NoGui
 )
 
 function Format-Size {
@@ -271,9 +280,15 @@ try {
 $tree = Get-DirectorySize -DirPath $resolvedPath -CurrentDepth 0 -Indent ""
 Write-Progress -Activity $script:progressActivity -Completed
 
-if ($Gui) {
-    # $IsWindows is only defined in PowerShell 6+; on Windows PowerShell 5.x we're always on Windows.
-    $isWindowsPlatform = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows
+# $IsWindows is only defined in PowerShell 6+; on Windows PowerShell 5.x we're always on Windows.
+$isWindowsPlatform = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows
+
+# On Windows the GUI is the default; pass -NoGui to get plain console output.
+# On non-Windows the console is the default; pass -Gui to explicitly request Windows Forms
+# (which will raise an error because WinForms is unavailable).
+$useGui = ($isWindowsPlatform -and -not $NoGui) -or $Gui
+
+if ($useGui) {
     if (-not $isWindowsPlatform) {
         Write-Error "The -Gui switch requires Windows and Windows Forms support."
         exit 1

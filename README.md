@@ -5,6 +5,7 @@ A PowerShell script that scans directories and displays a hierarchical tree view
 ## Features
 
 - Recursively scans all subdirectories and calculates their total sizes
+- **Opens an interactive, collapsible tree window by default on Windows** (requires no extra flags)
 - Displays results in a tree layout sorted by size (largest first)
 - Human-readable size formatting (B, KB, MB, GB, TB)
 - Defaults to the system drive (`$env:SystemDrive`) when no path is provided
@@ -15,7 +16,7 @@ A PowerShell script that scans directories and displays a hierarchical tree view
 ## Usage
 
 ```powershell
-.\Get-TreeSize.ps1 [[-Path] <string>] [-Depth <int>] [-MinSize <long>]
+.\Get-TreeSize.ps1 [[-Path] <string>] [-Depth <int>] [-MinSize <long>] [-NoGui]
 ```
 
 ### Parameters
@@ -25,11 +26,12 @@ A PowerShell script that scans directories and displays a hierarchical tree view
 | `-Path`    | Root directory to scan                                              | System drive (`C:\`) |
 | `-Depth`   | Maximum directory depth to display (`-1` = unlimited)              | `-1`                 |
 | `-MinSize` | Minimum size in bytes to display an entry (supports `1MB`, `1GB`)  | `0`                  |
+| `-NoGui`   | Print results to the console instead of opening the tree window     | *(GUI is default on Windows)* |
 
 ### Examples
 
 ```powershell
-# Scan the system drive (default)
+# Scan the system drive – opens the tree window on Windows (default)
 .\Get-TreeSize.ps1
 
 # Scan a specific directory
@@ -40,9 +42,12 @@ A PowerShell script that scans directories and displays a hierarchical tree view
 
 # Only show entries larger than 100 MB
 .\Get-TreeSize.ps1 -Path "C:\Windows" -MinSize 100MB
+
+# Print to the console instead of opening the GUI window
+.\Get-TreeSize.ps1 -Path "C:\Users" -NoGui
 ```
 
-### Sample Output
+### Console output (`-NoGui`)
 
 ```
 Scanning 'C:\Users' ...
