@@ -226,8 +226,7 @@ function Show-TreeGui {
     $statusLabel.Padding   = [System.Windows.Forms.Padding]::new(6, 0, 0, 0)
     $statusBar.Controls.Add($statusLabel)
 
-    $rootTvNode = Add-TreeViewNodes -Nodes $tv.Nodes -Node $RootNode -IsRoot $true
-    $rootTvNode.Expand()
+    Add-TreeViewNodes -Nodes $tv.Nodes -Node $RootNode -IsRoot $true | Out-Null
 
     # Add controls in reverse dock order so Fill occupies the remaining space correctly
     $form.Controls.Add($tv)
