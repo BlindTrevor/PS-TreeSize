@@ -82,8 +82,6 @@ $script:scanStartTime      = $null
 $script:topLevelTotal      = 0
 $script:topLevelDone       = 0
 $script:progressPct        = 0
-$script:progressEta           = -1
-$script:progressEtaComputedAt = [datetime]::MinValue
 $script:progressActivity      = ""
 $script:lastProgressUpdate    = [datetime]::MinValue
 $script:LazyPlaceholder       = '__ps_treesize_lazy__'
@@ -96,28 +94,22 @@ function Get-DirectorySize {
     )
 
     # Update the progress bar, throttled to at most once every 150 ms.
-    # Recalculate percentage and ETA each time we start a new top-level subdirectory.
+    # Recalculate percentage each time we start a new top-level subdirectory.
     if ($script:topLevelTotal -gt 0) {
         $now = [datetime]::UtcNow
         if ($CurrentDepth -eq 1) {
-            $elapsed = $now - $script:scanStartTime
             $script:progressPct = [int](($script:topLevelDone / $script:topLevelTotal) * 100)
-            if ($script:topLevelDone -gt 0) {
-                $secsPerDir = $elapsed.TotalSeconds / $script:topLevelDone
-                $script:progressEta           = [Math]::Round($secsPerDir * ($script:topLevelTotal - $script:topLevelDone))
-                $script:progressEtaComputedAt = $now
-            }
             $script:topLevelDone++
         }
         if (($now - $script:lastProgressUpdate).TotalMilliseconds -gt 150) {
-            # Count the ETA down in real time so it never stays frozen between depth-1 updates.
-            # Once the original estimate is exhausted, suppress the display (-1) rather than
-            # showing a misleading stale value.
-            $displayEta = if ($script:progressEta -ge 0 -and $script:progressEtaComputedAt -ne [datetime]::MinValue) {
-                $remaining = $script:progressEta - ($now - $script:progressEtaComputedAt).TotalSeconds
-                if ($remaining -gt 0) { [Math]::Round($remaining) } else { -1 }
+            # Derive ETA from cumulative elapsed time and completed-dir count so the
+            # estimate adjusts smoothly and never disappears between depth-1 boundaries.
+            $elapsed = ($now - $script:scanStartTime).TotalSeconds
+            $displayEta = if ($script:topLevelDone -gt 0 -and $elapsed -gt 0) {
+                $secsPerDir = $elapsed / $script:topLevelDone
+                [Math]::Max(0, [Math]::Round($secsPerDir * ($script:topLevelTotal - $script:topLevelDone)))
             } else {
-                $script:progressEta
+                -1
             }
             Write-Progress -Activity $script:progressActivity `
                 -Status "Scanning: $DirPath" `
