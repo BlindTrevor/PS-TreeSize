@@ -169,18 +169,22 @@ function Add-TreeViewNodes {
     param (
         [System.Windows.Forms.TreeNodeCollection]$Nodes,
         [PSCustomObject]$Node,
-        [bool]$IsRoot = $false
+        [bool]$IsRoot = $false,
+        [long]$ParentSize = 0
     )
 
     $displayName = if ($IsRoot) { $Node.Path } else { Split-Path $Node.Path -Leaf }
+    $pct = if ($IsRoot -or $ParentSize -le 0) { 100.0 } else { [Math]::Round($Node.Size / $ParentSize * 100.0, 1) }
     $tvNode = [System.Windows.Forms.TreeNode]::new(
         ("{0}  {1}" -f (Format-Size $Node.Size), $displayName)
     )
+    $tvNode.Tag         = $pct
+    $tvNode.ToolTipText = if ($IsRoot) { '' } else { "$pct% of parent" }
 
     foreach ($child in $Node.Children) {
         $canDisplay = ($Depth -eq -1) -or ($child.Depth -le $Depth)
         if ($canDisplay -and $child.Size -ge $MinSize) {
-            Add-TreeViewNodes -Nodes $tvNode.Nodes -Node $child
+            Add-TreeViewNodes -Nodes $tvNode.Nodes -Node $child -ParentSize $Node.Size
         }
     }
 
@@ -212,6 +216,38 @@ function Show-TreeGui {
     $tv.ShowLines     = $true
     $tv.ShowPlusMinus = $true
     $tv.Scrollable    = $true
+    $tv.DrawMode      = [System.Windows.Forms.TreeViewDrawMode]::OwnerDrawText
+    $tv.ShowNodeToolTips = $true
+
+    $barBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(100, 70, 130, 180))
+    $tv.Add_DrawNode({
+        param($drawSender, $drawE)
+
+        $pct        = if ($null -ne $drawE.Node.Tag) { [double]$drawE.Node.Tag } else { 0.0 }
+        $isSelected = ($drawE.State -band [System.Windows.Forms.TreeNodeStates]::Selected) -ne 0
+
+        # Draw background
+        $bgBrush = if ($isSelected) { [System.Drawing.SystemBrushes]::Highlight } else { [System.Drawing.SystemBrushes]::Window }
+        $drawE.Graphics.FillRectangle($bgBrush, $drawE.Bounds)
+
+        # Draw percentage bar behind the text
+        if ($pct -gt 0 -and $drawE.Bounds.Width -gt 0) {
+            $barWidth = [int]($drawE.Bounds.Width * $pct / 100.0)
+            $drawE.Graphics.FillRectangle($barBrush, $drawE.Bounds.X, $drawE.Bounds.Y, $barWidth, $drawE.Bounds.Height)
+        }
+
+        # Draw node text
+        $fgColor = if ($isSelected) { [System.Drawing.SystemColors]::HighlightText } else { [System.Drawing.SystemColors]::WindowText }
+        $flags   = [System.Windows.Forms.TextFormatFlags]::Left -bor
+                   [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor
+                   [System.Windows.Forms.TextFormatFlags]::NoPrefix
+        [System.Windows.Forms.TextRenderer]::DrawText($drawE.Graphics, $drawE.Node.Text, $drawE.Node.TreeView.Font, $drawE.Bounds, $fgColor, $flags)
+
+        # Draw focus rectangle when the node has keyboard focus
+        if (($drawE.State -band [System.Windows.Forms.TreeNodeStates]::Focused) -ne 0) {
+            [System.Windows.Forms.ControlPaint]::DrawFocusRectangle($drawE.Graphics, $drawE.Bounds, $fgColor, [System.Drawing.SystemColors]::Window)
+        }
+    })
 
     $statusBar            = [System.Windows.Forms.Panel]::new()
     $statusBar.Dock       = [System.Windows.Forms.DockStyle]::Bottom
@@ -233,6 +269,7 @@ function Show-TreeGui {
     $form.Controls.Add($statusBar)
 
     $form.ShowDialog() | Out-Null
+    $barBrush.Dispose()
     $form.Dispose()
 }
 
