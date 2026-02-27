@@ -174,7 +174,7 @@ function Add-TreeViewNodes {
 
     $displayName = if ($IsRoot) { $Node.Path } else { Split-Path $Node.Path -Leaf }
     $tvNode = [System.Windows.Forms.TreeNode]::new(
-        "{0}  {1}" -f (Format-Size $Node.Size), $displayName
+        ("{0}  {1}" -f (Format-Size $Node.Size), $displayName)
     )
 
     foreach ($child in $Node.Children) {
