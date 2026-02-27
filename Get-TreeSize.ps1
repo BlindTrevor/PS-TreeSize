@@ -73,9 +73,10 @@ $script:scanStartTime      = $null
 $script:topLevelTotal      = 0
 $script:topLevelDone       = 0
 $script:progressPct        = 0
-$script:progressEta        = -1
-$script:progressActivity   = ""
-$script:lastProgressUpdate = [datetime]::MinValue
+$script:progressEta           = -1
+$script:progressEtaComputedAt = [datetime]::MinValue
+$script:progressActivity      = ""
+$script:lastProgressUpdate    = [datetime]::MinValue
 
 function Get-DirectorySize {
     param (
@@ -93,15 +94,25 @@ function Get-DirectorySize {
             $script:progressPct = [int](($script:topLevelDone / $script:topLevelTotal) * 100)
             if ($script:topLevelDone -gt 0) {
                 $secsPerDir = $elapsed.TotalSeconds / $script:topLevelDone
-                $script:progressEta = [int]($secsPerDir * ($script:topLevelTotal - $script:topLevelDone))
+                $script:progressEta           = [Math]::Round($secsPerDir * ($script:topLevelTotal - $script:topLevelDone))
+                $script:progressEtaComputedAt = $now
             }
             $script:topLevelDone++
         }
         if (($now - $script:lastProgressUpdate).TotalMilliseconds -gt 150) {
+            # Count the ETA down in real time so it never stays frozen between depth-1 updates.
+            # Once the original estimate is exhausted, suppress the display (-1) rather than
+            # showing a misleading stale value.
+            $displayEta = if ($script:progressEta -ge 0 -and $script:progressEtaComputedAt -ne [datetime]::MinValue) {
+                $remaining = $script:progressEta - ($now - $script:progressEtaComputedAt).TotalSeconds
+                if ($remaining -gt 0) { [Math]::Round($remaining) } else { -1 }
+            } else {
+                $script:progressEta
+            }
             Write-Progress -Activity $script:progressActivity `
                 -Status "Scanning: $DirPath" `
                 -PercentComplete $script:progressPct `
-                -SecondsRemaining $script:progressEta
+                -SecondsRemaining $displayEta
             $script:lastProgressUpdate = $now
         }
     }
